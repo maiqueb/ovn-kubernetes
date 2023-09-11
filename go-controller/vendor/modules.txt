@@ -225,8 +225,10 @@ github.com/mailru/easyjson/jwriter
 ## explicit; go 1.20
 github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1
 github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/clientset/versioned
+github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/clientset/versioned/fake
 github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/clientset/versioned/scheme
 github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/clientset/versioned/typed/persistentip/v1alpha1
+github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/clientset/versioned/typed/persistentip/v1alpha1/fake
 github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/informers/externalversions
 github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/informers/externalversions/internalinterfaces
 github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/informers/externalversions/persistentip

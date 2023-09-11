@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/containernetworking/cni/pkg/types"
+	fakeipamclaimclient "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/clientset/versioned/fake"
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
@@ -140,7 +141,8 @@ var _ = ginkgo.Describe("Secondary Layer3 Cluster Controller Manager", func() {
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
-					KubeClient: kubeFakeClient,
+					KubeClient:       kubeFakeClient,
+					IPAMClaimsClient: fakeipamclaimclient.NewSimpleClientset(),
 				}
 
 				_, err := config.InitConfig(ctx, nil, nil)

@@ -15,6 +15,7 @@ import (
 
 	idallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/node"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/persistentips"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -30,7 +31,7 @@ import (
 // level to support the necessary configuration for the cluster networks.
 type networkClusterController struct {
 	watchFactory *factory.WatchFactory
-	kube         kube.Interface
+	kube         kube.InterfaceOVN
 	stopChan     chan struct{}
 	wg           *sync.WaitGroup
 
@@ -44,16 +45,20 @@ type networkClusterController struct {
 	podHandler *factory.Handler
 	retryPods  *objretry.RetryFramework
 
-	podAllocator       *pod.PodAllocator
-	nodeAllocator      *node.NodeAllocator
-	networkIDAllocator idallocator.NamedAllocator
+	podAllocator           *pod.PodAllocator
+	nodeAllocator          *node.NodeAllocator
+	persistentIPsAllocator *persistentips.Allocator
+	networkIDAllocator     idallocator.NamedAllocator
 
 	util.NetInfo
 }
 
 func newNetworkClusterController(networkIDAllocator idallocator.NamedAllocator, netInfo util.NetInfo, ovnClient *util.OVNClusterManagerClientset, wf *factory.WatchFactory) *networkClusterController {
-	kube := &kube.Kube{
-		KClient: ovnClient.KubeClient,
+	kube := &kube.KubeOVN{
+		Kube: kube.Kube{
+			KClient: ovnClient.KubeClient,
+		},
+		PersistentIPsClient: ovnClient.IPAMClaimsClient,
 	}
 
 	wg := &sync.WaitGroup{}
@@ -135,10 +140,13 @@ func (ncc *networkClusterController) init() error {
 	if ncc.hasPodAllocation() {
 		ncc.retryPods = ncc.newRetryFramework(factory.PodType, true)
 
-		ncc.podAllocator = pod.NewPodAllocator(ncc.NetInfo, ncc.watchFactory.PodCoreInformer().Lister(), ncc.kube)
+		ncc.podAllocator = pod.NewPodAllocator(ncc.NetInfo, ncc.watchFactory.PodCoreInformer().Lister(), ncc.kube, ncc.watchFactory)
 		err := ncc.podAllocator.Init()
 		if err != nil {
 			return fmt.Errorf("failed to initialize pod ip allocator: %w", err)
+		}
+		if util.DoesNetworkRequireIPAM(ncc.NetInfo) {
+			ncc.persistentIPsAllocator = persistentips.NewPersistentIPsAllocator(ncc.kube, ncc.podAllocator.IPAllocator())
 		}
 	}
 
@@ -337,6 +345,8 @@ func (h *networkClusterControllerEventHandler) SyncFunc(objs []interface{}) erro
 			syncFunc = h.ncc.podAllocator.Sync
 		case factory.NodeType:
 			syncFunc = h.ncc.nodeAllocator.Sync
+		case factory.PersistentIPsType:
+			syncFunc = h.ncc.persistentIPsAllocator.Sync
 
 		default:
 			return fmt.Errorf("no sync function for object type %s", h.objType)
@@ -385,6 +395,8 @@ func (h *networkClusterControllerEventHandler) GetResourceFromInformerCache(key 
 		obj, err = h.ncc.watchFactory.GetNode(name)
 	case factory.PodType:
 		obj, err = h.ncc.watchFactory.GetPod(namespace, name)
+	case factory.PersistentIPsType:
+		obj, err = h.ncc.watchFactory.GetPersistentIPs(namespace, name)
 	default:
 		err = fmt.Errorf("object type %s not supported, cannot retrieve it from informers cache",
 			h.objType)

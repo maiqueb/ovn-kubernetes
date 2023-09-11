@@ -11,6 +11,7 @@ import (
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	ipamclaimsapi "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ipam "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
@@ -80,6 +81,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		ipAllocator subnet.NamedAllocator
 		idAllocator id.NamedAllocator
 		network     *nadapi.NetworkSelectionElement
+		ipamClaim   *ipamclaimsapi.IPAMClaim
 		reallocate  bool
 	}
 	tests := []struct {
@@ -87,6 +89,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		args                      args
 		ipam                      bool
 		idAllocation              bool
+		persistentIPAllocation    bool
 		podAnnotation             *util.PodAnnotation
 		invalidNetworkAnnotation  bool
 		wantUpdatedPod            bool
@@ -403,6 +406,34 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			wantReleasedIPs:          ovntest.MustParseIPNets("192.168.0.3/24"),
 		},
 		{
+			// on networks with IPAM, and persistent IPs, expect to reuse the
+			// already allocated IPAM claim
+			name:                   "IPAM persistent IPs, IP address re-use",
+			ipam:                   true,
+			persistentIPAllocation: true,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPAMClaimReference: "my-ipam-claim",
+				},
+				ipamClaim: &ipamclaimsapi.IPAMClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "my-ipam-claim",
+					},
+					Status: ipamclaimsapi.IPAMClaimStatus{
+						IPs: []string{"192.168.0.200/24"},
+					},
+				},
+				ipAllocator: &ipAllocatorStub{
+					netxtIPs: ovntest.MustParseIPNets("192.168.0.3/24"),
+				},
+			},
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				IPs: ovntest.MustParseIPNets("192.168.0.200/24"),
+				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.200/24")[0].IP),
+			},
+		},
+		{
 			// on networks with ID allocation, expect allocated ID
 			name:         "expect ID allocation",
 			idAllocation: true,
@@ -501,7 +532,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			var netInfo util.NetInfo
 			netInfo = &util.DefaultNetInfo{}
 			nadName := types.DefaultNetworkName
-			if !tt.ipam || tt.idAllocation {
+			if !tt.ipam || tt.idAllocation || tt.persistentIPAllocation {
 				nadName = util.GetNADName(network.Namespace, network.Name)
 				netInfo, err = util.NewNetInfo(&ovncnitypes.NetConf{
 					Topology: types.Layer2Topology,
@@ -542,6 +573,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				netInfo,
 				pod,
 				network,
+				tt.args.ipamClaim,
 				tt.args.reallocate,
 			)
 
