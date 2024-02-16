@@ -83,3 +83,11 @@ rules:
         - adminpolicybasedexternalroutes/status
         - egressfirewalls/status
       verbs: [ "patch", "update" ]
+    - apiGroups: [ "k8s.cni.cncf.io" ]
+      resources:
+      - ipamclaims
+      verbs: ["list", "get", "watch"]
+    - apiGroups: [ "k8s.cni.cncf.io" ]
+      resources:
+      - ipamclaims/status
+      verbs: [ "patch", "update" ]
