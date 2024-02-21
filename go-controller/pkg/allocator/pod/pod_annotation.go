@@ -48,6 +48,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 	ipAllocator subnet.NamedAllocator,
 	pod *v1.Pod,
 	network *nadapi.NetworkSelectionElement,
+	ipamClaim *ipamclaimsapi.IPAMClaim,
 	reallocateIP bool) (
 	*v1.Pod,
 	*util.PodAnnotation,
@@ -60,6 +61,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 		allocator.netInfo,
 		pod,
 		network,
+		ipamClaim,
 		reallocateIP,
 	)
 
@@ -72,6 +74,7 @@ func allocatePodAnnotation(
 	netInfo util.NetInfo,
 	pod *v1.Pod,
 	network *nadapi.NetworkSelectionElement,
+	ipamClaim *ipamclaimsapi.IPAMClaim,
 	reallocateIP bool) (
 	updatedPod *v1.Pod,
 	podAnnotation *util.PodAnnotation,
@@ -88,7 +91,7 @@ func allocatePodAnnotation(
 			netInfo,
 			pod,
 			network,
-			nil,
+			ipamClaim,
 			reallocateIP)
 		return pod, rollback, err
 	}

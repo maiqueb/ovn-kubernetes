@@ -234,6 +234,7 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		mnpFactory:           mnpinformerfactory.NewSharedInformerFactory(ovnClientset.MultiNetworkPolicyClient, resyncInterval),
 		egressServiceFactory: egressserviceinformerfactory.NewSharedInformerFactory(ovnClientset.EgressServiceClient, resyncInterval),
 		apbRouteFactory:      adminbasedpolicyinformerfactory.NewSharedInformerFactory(ovnClientset.AdminPolicyRouteClient, resyncInterval),
+		ipamClaimsFactory:    ipamclaimsfactory.NewSharedInformerFactory(ovnClientset.IPAMClaimsClient, resyncInterval),
 		informers:            make(map[reflect.Type]*informer),
 		stopChan:             make(chan struct{}),
 	}
@@ -263,6 +264,10 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	}
 
 	if err := mnpapi.AddToScheme(mnpscheme.Scheme); err != nil {
+		return nil, err
+	}
+
+	if err := ipamclaimsapi.AddToScheme(ipamclaimsscheme.Scheme); err != nil {
 		return nil, err
 	}
 
@@ -345,6 +350,13 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	}
 	if config.OVNKubernetesFeature.EnableEgressService {
 		wf.informers[EgressServiceType], err = newInformer(EgressServiceType, wf.egressServiceFactory.K8s().V1().EgressServices().Informer())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if config.OVNKubernetesFeature.EnableMultiNetwork {
+		wf.informers[PersistentIPsType], err = newQueuedInformer(PersistentIPsType, wf.ipamClaimsFactory.K8s().V1alpha1().IPAMClaims().Informer(), wf.stopChan, defaultNumEventQueues)
 		if err != nil {
 			return nil, err
 		}

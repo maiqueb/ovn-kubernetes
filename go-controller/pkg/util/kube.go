@@ -90,7 +90,7 @@ type OVNKubeControllerClientset struct {
 	MultiNetworkPolicyClient multinetworkpolicyclientset.Interface
 	EgressServiceClient      egressserviceclientset.Interface
 	AdminPolicyRouteClient   adminpolicybasedrouteclientset.Interface
-	PersistentIPsClient      ipamclaimssclientset.Interface
+	IPAMClaimsClient         ipamclaimssclientset.Interface
 }
 
 type OVNNodeClientset struct {
@@ -146,7 +146,7 @@ func (cs *OVNMasterClientset) GetOVNKubeControllerClientset() *OVNKubeController
 		MultiNetworkPolicyClient: cs.MultiNetworkPolicyClient,
 		EgressServiceClient:      cs.EgressServiceClient,
 		AdminPolicyRouteClient:   cs.AdminPolicyRouteClient,
-		PersistentIPsClient:      cs.PersistentIPsClient,
+		IPAMClaimsClient:         cs.PersistentIPsClient,
 	}
 }
 

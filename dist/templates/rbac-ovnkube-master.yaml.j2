@@ -112,6 +112,14 @@ rules:
           - pods/status
           - services/status
       verbs: [ "patch", "update" ]
+    - apiGroups: [ "k8s.cni.cncf.io" ]
+      resources:
+      - ipamclaims
+      verbs: ["list", "get", "watch"]
+    - apiGroups: [ "k8s.cni.cncf.io" ]
+      resources:
+      - ipamclaims/status
+      verbs: [ "patch", "update" ]
 
 
 # https://github.com/ovn-org/ovn-kubernetes/blob/e1e7d40f9a6c6038b52696c1b8f8915a4d73160e/go-controller/pkg/ovn/topology_version.go#L28
