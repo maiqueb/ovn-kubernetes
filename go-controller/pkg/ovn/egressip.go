@@ -1888,7 +1888,7 @@ func (e *egressIPZoneController) deleteEgressIPStatusSetup(name string, status e
 	if err == nil {
 		eIPIP := net.ParseIP(status.EgressIP)
 		if eIPConfig, err := util.GetNodeEIPConfig(eNode); err != nil {
-			klog.Warningf("Failed to get Egress IP config from node annotation: %v", name, eIPIP, err)
+			klog.Warningf("Failed to get config for EgressIP %q (%v) from node annotation: %v", name, eIPIP, err)
 		} else {
 			isOVNNetwork := util.IsOVNNetwork(eIPConfig, eIPIP)
 			nextHopIP, err = e.getNextHop(status.Node, status.EgressIP, name, isLocalZoneEgressNode, isOVNNetwork)

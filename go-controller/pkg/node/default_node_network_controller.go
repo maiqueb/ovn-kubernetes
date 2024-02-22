@@ -955,10 +955,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 			klog.Exitf("Upgrade hack: Timed out waiting for the remote ovnkube-controller to be ready even after 5 minutes, err : %v, %v", err, err1)
 		}
 		if err := util.SetNodeZoneMigrated(nodeAnnotator, sbZone); err != nil {
-			klog.Exitf("Upgrade hack: failed to set node zone annotation for node %s: %w", nc.name, err)
+			klog.Exitf("Upgrade hack: failed to set node zone annotation for node %s: %v", nc.name, err)
 		}
 		if err := nodeAnnotator.Run(); err != nil {
-			klog.Exitf("Upgrade hack: failed to set node %s annotations: %w", nc.name, err)
+			klog.Exitf("Upgrade hack: failed to set node %s annotations: %v", nc.name, err)
 		}
 		klog.Infof("ovnkube-node %s finished annotating node with remote-zone-migrated; took: %v", nc.name, time.Since(start))
 		for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
