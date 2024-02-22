@@ -27,14 +27,14 @@ import (
 	"gopkg.in/fsnotify/fsnotify.v1"
 	"gopkg.in/natefinch/lumberjack.v2"
 	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/klogr"
+	"k8s.io/klog/v2/textlogger"
 )
 
 func newClientLogger(dbModelName string) (logger logr.Logger, err error) {
 	logggerFilename := config.Logging.LibovsdbFile
 	if len(logggerFilename) == 0 {
 		// Not using a separate log file for libovsdb client
-		logger = klogr.New()
+		logger = textlogger.NewLogger(textlogger.NewConfig())
 		return logger, nil
 	}
 
