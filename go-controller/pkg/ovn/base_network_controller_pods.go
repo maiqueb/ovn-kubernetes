@@ -11,10 +11,8 @@ import (
 	"golang.org/x/exp/maps"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	persistentipsapi "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1"
 	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	subnetipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/persistentips"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	logicalswitchmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
@@ -932,41 +930,20 @@ func (bnc *BaseNetworkController) allocatePodAnnotationForSecondaryNetwork(pod *
 			network.IPRequest, network.MacRequest, nadName, pod.Namespace, pod.Name)
 	}
 
-	var (
-		ipAllocator            subnetipallocator.NamedAllocator
-		persistentIPsAllocator *persistentips.Allocator
-	)
+	var ipAllocator subnetipallocator.NamedAllocator
 	if bnc.doesNetworkRequireIPAM() {
 		ipAllocator = bnc.lsManager.ForSwitch(switchName)
-		persistentIPsAllocator = persistentips.NewPersistentIPsAllocator(bnc.kube, ipAllocator)
-	}
-
-	var ipamClaim *persistentipsapi.IPAMClaim
-	if util.DoesNetworkRequireIPAM(bnc.NetInfo) {
-		klog.Infof("Allocate IPAMClaim for pod NAD: %q", network.Name)
-		var err error
-		ipamClaim, err = bnc.findIPAMClaim(pod, network)
-		if err != nil {
-			return nil, false, err
-		}
 	}
 
 	updatedPod, podAnnotation, err := bnc.podAnnotationAllocator.AllocatePodAnnotation(
 		ipAllocator,
 		pod,
 		network,
-		ipamClaim,
 		reallocate,
 	)
 
 	if err != nil {
 		return nil, false, err
-	}
-
-	if ipamClaim != nil && persistentIPsAllocator != nil {
-		if err := persistentIPsAllocator.Reconcile(ipamClaim, util.StringSlice(podAnnotation.IPs)); err != nil {
-			return nil, false, err
-		}
 	}
 
 	if updatedPod != nil {
@@ -1170,19 +1147,4 @@ func (bnc *BaseNetworkController) wasPodReleasedBeforeStartup(uid, nad string) b
 		return false
 	}
 	return bnc.releasedPodsBeforeStartup[nad].Has(uid)
-}
-
-func (bnc *BaseNetworkController) findIPAMClaim(pod *kapi.Pod, network *nadapi.NetworkSelectionElement) (*persistentipsapi.IPAMClaim, error) {
-	if network.IPAMClaimReference != "" {
-		ipamClaimKey := network.IPAMClaimReference
-
-		klog.V(5).Infof("IPAMClaim key: %s", ipamClaimKey)
-		claim, err := bnc.watchFactory.GetPersistentIPs(pod.Namespace, ipamClaimKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get ipamLease %q", ipamClaimKey)
-		}
-
-		return claim, nil
-	}
-	return nil, nil
 }

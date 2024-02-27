@@ -55,10 +55,18 @@ func NewSecondaryLocalnetNetworkController(cnci *CommonNetworkControllerInfo, ne
 	}
 
 	if oc.allocatesPodAnnotation() {
+		var allocationOpts []pod.AllocationOption
+		if util.DoesNetworkRequireIPAM(netInfo) {
+			allocationOpts = append(
+				allocationOpts,
+				pod.WithPersistentIPs(oc.watchFactory.IPAMClaimsInformer().Lister()),
+			)
+		}
 		podAnnotationAllocator := pod.NewPodAnnotationAllocator(
 			netInfo,
 			cnci.watchFactory.PodCoreInformer().Lister(),
-			cnci.kube)
+			cnci.kube,
+			allocationOpts...)
 		oc.podAnnotationAllocator = podAnnotationAllocator
 	}
 

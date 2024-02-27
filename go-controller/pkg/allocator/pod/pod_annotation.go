@@ -2,6 +2,8 @@ package pod
 
 import (
 	"fmt"
+	ipamclaimslister "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/listers/persistentip/v1alpha1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/persistentips"
 	"net"
 
 	v1 "k8s.io/api/core/v1"
@@ -19,19 +21,32 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
+type AllocationOption func(paa *PodAnnotationAllocator)
+
 // PodAnnotationAllocator is a utility to handle allocation of the PodAnnotation to Pods.
 type PodAnnotationAllocator struct {
 	podLister listers.PodLister
-	kube      kube.Interface
+	kube      kube.InterfaceOVN
 
-	netInfo util.NetInfo
+	netInfo          util.NetInfo
+	ipamClaimsLister ipamclaimslister.IPAMClaimLister
 }
 
-func NewPodAnnotationAllocator(netInfo util.NetInfo, podLister listers.PodLister, kube kube.Interface) *PodAnnotationAllocator {
-	return &PodAnnotationAllocator{
+func NewPodAnnotationAllocator(netInfo util.NetInfo, podLister listers.PodLister, kube kube.InterfaceOVN, opts ...AllocationOption) *PodAnnotationAllocator {
+	allocator := &PodAnnotationAllocator{
 		podLister: podLister,
 		kube:      kube,
 		netInfo:   netInfo,
+	}
+	for _, opt := range opts {
+		opt(allocator)
+	}
+	return allocator
+}
+
+func WithPersistentIPs(ipamClaimLister ipamclaimslister.IPAMClaimLister) AllocationOption {
+	return func(paa *PodAnnotationAllocator) {
+		paa.ipamClaimsLister = ipamClaimLister
 	}
 }
 
@@ -48,13 +63,17 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 	ipAllocator subnet.NamedAllocator,
 	pod *v1.Pod,
 	network *nadapi.NetworkSelectionElement,
-	ipamClaim *ipamclaimsapi.IPAMClaim,
 	reallocateIP bool) (
 	*v1.Pod,
 	*util.PodAnnotation,
 	error) {
 
-	return allocatePodAnnotation(
+	ipamClaim, err := allocator.findIPAMClaim(network)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	updatedPod, podAnnotation, err := allocatePodAnnotation(
 		allocator.podLister,
 		allocator.kube,
 		ipAllocator,
@@ -64,7 +83,17 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 		ipamClaim,
 		reallocateIP,
 	)
+	if err != nil {
+		return nil, nil, err
+	}
 
+	if ipamClaim != nil {
+		persistentIPsAllocator := allocator.newPersistentIPsAllocator(ipAllocator)
+		if err := persistentIPsAllocator.Reconcile(ipamClaim, util.StringSlice(podAnnotation.IPs)); err != nil {
+			return nil, nil, err
+		}
+	}
+	return updatedPod, podAnnotation, nil
 }
 
 func allocatePodAnnotation(
@@ -124,13 +153,17 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 	idAllocator id.NamedAllocator,
 	pod *v1.Pod,
 	network *nadapi.NetworkSelectionElement,
-	ipamClaim *ipamclaimsapi.IPAMClaim,
 	reallocateIP bool) (
 	*v1.Pod,
 	*util.PodAnnotation,
 	error) {
 
-	return allocatePodAnnotationWithTunnelID(
+	ipamClaim, err := allocator.findIPAMClaim(network)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	updatedPod, podAnnotation, err := allocatePodAnnotationWithTunnelID(
 		allocator.podLister,
 		allocator.kube,
 		ipAllocator,
@@ -141,6 +174,17 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 		ipamClaim,
 		reallocateIP,
 	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if ipamClaim != nil {
+		persistentIPsAllocator := allocator.newPersistentIPsAllocator(ipAllocator)
+		if err := persistentIPsAllocator.Reconcile(ipamClaim, util.StringSlice(podAnnotation.IPs)); err != nil {
+			return nil, nil, err
+		}
+	}
+	return updatedPod, podAnnotation, nil
 }
 
 func allocatePodAnnotationWithTunnelID(
@@ -376,4 +420,24 @@ func allocatePodAnnotationWithRollback(
 	}
 
 	return
+}
+
+func (allocator *PodAnnotationAllocator) newPersistentIPsAllocator(ipAllocator subnet.NamedAllocator) *persistentips.Allocator {
+	return persistentips.NewPersistentIPsAllocator(allocator.kube, ipAllocator)
+}
+
+func (allocator *PodAnnotationAllocator) findIPAMClaim(network *nadapi.NetworkSelectionElement) (*ipamclaimsapi.IPAMClaim, error) {
+	if allocator.ipamClaimsLister != nil && util.DoesNetworkRequireIPAM(allocator.netInfo) {
+		if network.IPAMClaimReference != "" {
+			ipamClaimKey := network.IPAMClaimReference
+
+			klog.V(5).Infof("IPAMClaim key: %s", ipamClaimKey)
+			claim, err := allocator.ipamClaimsLister.IPAMClaims(network.Namespace).Get(ipamClaimKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get ipamLease %q", ipamClaimKey)
+			}
+			return claim, nil
+		}
+	}
+	return nil, nil
 }

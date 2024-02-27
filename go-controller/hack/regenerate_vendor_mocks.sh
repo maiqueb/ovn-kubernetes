@@ -21,7 +21,7 @@ then
   GOBINPATH=${gocmd_result//GOPATH=/}/bin
   echo $GOBINPATH
   echo "mockery not installed, installing mockery ...."
-  VER=2.14.0
+  VER=2.42.0
   wget https://github.com/vektra/mockery/releases/download/v${VER}/mockery_${VER}_Linux_x86_64.tar.gz -P $GOBINPATH
   tar -xf $GOBINPATH/mockery_${VER}_Linux_x86_64.tar.gz -C $GOBINPATH
   mockery --version

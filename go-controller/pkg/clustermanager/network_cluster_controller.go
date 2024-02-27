@@ -3,6 +3,7 @@ package clustermanager
 import (
 	"context"
 	"fmt"
+	podannotations "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"reflect"
 	"sync"
 
@@ -140,12 +141,27 @@ func (ncc *networkClusterController) init() error {
 	if ncc.hasPodAllocation() {
 		ncc.retryPods = ncc.newRetryFramework(factory.PodType, true)
 
-		ncc.podAllocator = pod.NewPodAllocator(ncc.NetInfo, ncc.watchFactory.PodCoreInformer().Lister(), ncc.kube, ncc.watchFactory)
+		var (
+			annotationAllocationOpts           []podannotations.AllocationOption
+			shouldCreatePersistentIPsAllocator bool
+		)
+		if util.DoesNetworkRequireIPAM(ncc.NetInfo) {
+			annotationAllocationOpts = append(annotationAllocationOpts, podannotations.WithPersistentIPs(ncc.watchFactory.IPAMClaimsInformer().Lister()))
+			shouldCreatePersistentIPsAllocator = true
+		}
+
+		ncc.podAllocator = pod.NewPodAllocator(
+			ncc.NetInfo,
+			ncc.watchFactory.PodCoreInformer().Lister(),
+			ncc.kube,
+			annotationAllocationOpts...,
+		)
 		err := ncc.podAllocator.Init()
 		if err != nil {
 			return fmt.Errorf("failed to initialize pod ip allocator: %w", err)
 		}
-		if util.DoesNetworkRequireIPAM(ncc.NetInfo) {
+
+		if shouldCreatePersistentIPsAllocator {
 			ncc.persistentIPsAllocator = persistentips.NewPersistentIPsAllocator(ncc.kube, ncc.podAllocator.IPAllocator())
 		}
 	}
@@ -396,7 +412,7 @@ func (h *networkClusterControllerEventHandler) GetResourceFromInformerCache(key 
 	case factory.PodType:
 		obj, err = h.ncc.watchFactory.GetPod(namespace, name)
 	case factory.PersistentIPsType:
-		obj, err = h.ncc.watchFactory.GetPersistentIPs(namespace, name)
+		obj, err = h.ncc.watchFactory.GetIPAMClaims(namespace, name)
 	default:
 		err = fmt.Errorf("object type %s not supported, cannot retrieve it from informers cache",
 			h.objType)

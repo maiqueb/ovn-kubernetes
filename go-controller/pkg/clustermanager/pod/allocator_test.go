@@ -1,6 +1,7 @@
 package pod
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -19,8 +20,14 @@ import (
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	ipamclaimsapi "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1"
+	fakeipamclaimclient "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/clientset/versioned/fake"
+	ipamclaimsfactory "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/informers/externalversions"
+	ipamclaimslister "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/listers/persistentip/v1alpha1"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 
@@ -105,7 +112,7 @@ func (a *ipAllocatorStub) ConditionalIPRelease(name string, ips []*net.IPNet, pr
 }
 
 func (a *ipAllocatorStub) ForSubnet(name string) subnet.NamedAllocator {
-	return nil
+	return &namedAllocatorStub{}
 }
 
 func (a *ipAllocatorStub) GetSubnetName([]*net.IPNet) (string, bool) {
@@ -136,11 +143,27 @@ func (a *idAllocatorStub) GetSubnetName([]*net.IPNet) (string, bool) {
 	panic("not implemented") // TODO: Implement
 }
 
+type namedAllocatorStub struct {
+}
+
+func (nas *namedAllocatorStub) AllocateIPs(ips []*net.IPNet) error {
+	return nil
+}
+
+func (nas *namedAllocatorStub) AllocateNextIPs() ([]*net.IPNet, error) {
+	return nil, nil
+}
+
+func (nas *namedAllocatorStub) ReleaseIPs(ips []*net.IPNet) error {
+	return nil
+}
+
 func TestPodAllocator_reconcileForNAD(t *testing.T) {
 	type args struct {
-		old     *testPod
-		new     *testPod
-		release bool
+		old       *testPod
+		new       *testPod
+		ipamClaim *ipamclaimsapi.IPAMClaim
+		release   bool
 	}
 	tests := []struct {
 		name            string
@@ -394,6 +417,29 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			},
 			tracked: true,
 		},
+		{
+			name: "Pod on network, persistent IP requested, IPAMClaim features IPs",
+			args: args{
+				new: &testPod{
+					scheduled: true,
+					network: &nadapi.NetworkSelectionElement{
+						Name:               "nad",
+						IPAMClaimReference: "claim",
+					},
+				},
+				ipamClaim: &ipamclaimsapi.IPAMClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "claim",
+						Namespace: "namespace",
+					},
+					Status: ipamclaimsapi.IPAMClaimStatus{
+						IPs: []string{"192.168.200.80/24"},
+					},
+				},
+			},
+			expectAllocate: true,
+			ipam:           true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -402,7 +448,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			idallocator := &idAllocatorStub{}
 
 			podListerMock := &v1mocks.PodLister{}
-			kubeMock := &kubemocks.Interface{}
+			kubeMock := &kubemocks.InterfaceOVN{}
 			podNamespaceLister := &v1mocks.PodNamespaceLister{}
 
 			podListerMock.On("Pods", mock.AnythingOfType("string")).Return(podNamespaceLister)
@@ -429,10 +475,24 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			}
 			netInfo.AddNAD("namespace/nad")
 
+			var annotationAllocationOpts []pod.AllocationOption
+			if tt.ipam && tt.args.ipamClaim != nil {
+				ctx, cancel := context.WithCancel(context.Background())
+				ipamClaimsLister, teardownFn := generateIPAMClaimsListerAndTeardownFunc(ctx.Done(), tt.args.ipamClaim)
+				annotationAllocationOpts = append(
+					annotationAllocationOpts,
+					pod.WithPersistentIPs(ipamClaimsLister),
+				)
+				t.Cleanup(func() {
+					cancel()
+					teardownFn()
+				})
+			}
 			podAnnotationAllocator := pod.NewPodAnnotationAllocator(
 				netInfo,
 				podListerMock,
 				kubeMock,
+				annotationAllocationOpts...,
 			)
 
 			a := &PodAllocator{
@@ -478,5 +538,16 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				t.Errorf("expected pod tracked to be %v but it was %v", tt.expectTracked, a.releasedPods["namespace/nad"].Has("pod"))
 			}
 		})
+	}
+}
+
+func generateIPAMClaimsListerAndTeardownFunc(stopChannel <-chan struct{}, ipamClaims ...runtime.Object) (ipamclaimslister.IPAMClaimLister, func()) {
+	ipamClaimClient := fakeipamclaimclient.NewSimpleClientset(ipamClaims...)
+	informerFactory := ipamclaimsfactory.NewSharedInformerFactory(ipamClaimClient, 0)
+	lister := informerFactory.K8s().V1alpha1().IPAMClaims().Lister()
+	informerFactory.Start(stopChannel)
+	informerFactory.WaitForCacheSync(stopChannel)
+	return lister, func() {
+		informerFactory.Shutdown()
 	}
 }

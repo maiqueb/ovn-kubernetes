@@ -3,6 +3,7 @@ package factory
 import (
 	"context"
 	"fmt"
+	"github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1/apis/informers/externalversions/persistentip/v1alpha1"
 	"reflect"
 	"sync/atomic"
 	"time"
@@ -1254,7 +1255,7 @@ func (wf *WatchFactory) CertificateSigningRequestInformer() certificatesinformer
 	return wf.iFactory.Certificates().V1().CertificateSigningRequests()
 }
 
-func (wf *WatchFactory) GetPersistentIPs(namespace, name string) (*ipamclaimsapi.IPAMClaim, error) {
+func (wf *WatchFactory) GetIPAMClaims(namespace, name string) (*ipamclaimsapi.IPAMClaim, error) {
 	lister := wf.informers[PersistentIPsType].lister.(ipamclaimslister.IPAMClaimLister)
 	return lister.IPAMClaims(namespace).Get(name)
 }
@@ -1331,6 +1332,10 @@ func (wf *WatchFactory) EgressIPInformer() egressipinformer.EgressIPInformer {
 
 func (wf *WatchFactory) EgressFirewallInformer() egressfirewallinformer.EgressFirewallInformer {
 	return wf.efFactory.K8s().V1().EgressFirewalls()
+}
+
+func (wf *WatchFactory) IPAMClaimsInformer() v1alpha1.IPAMClaimInformer {
+	return wf.ipamClaimsFactory.K8s().V1alpha1().IPAMClaims()
 }
 
 // withServiceNameAndNoHeadlessServiceSelector returns a LabelSelector (added to the

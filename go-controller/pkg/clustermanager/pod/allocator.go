@@ -11,12 +11,9 @@ import (
 	"k8s.io/klog/v2"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	persistentipsapi "github.com/maiqueb/persistentips/pkg/crd/persistentip/v1alpha1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/persistentips"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -28,8 +25,8 @@ import (
 type PodAllocator struct {
 	netInfo util.NetInfo
 
-	kube         kube.InterfaceOVN
-	watchFactory *factory.WatchFactory
+	// kube is the ovn-kubernetes client w/ all the required batteries
+	kube kube.InterfaceOVN
 
 	// ipAllocator of IPs within subnets
 	ipAllocator subnet.Allocator
@@ -47,17 +44,16 @@ type PodAllocator struct {
 }
 
 // NewPodAllocator builds a new PodAllocator
-func NewPodAllocator(netInfo util.NetInfo, podLister listers.PodLister, kube kube.InterfaceOVN, watchFactory *factory.WatchFactory) *PodAllocator {
+func NewPodAllocator(netInfo util.NetInfo, podLister listers.PodLister, kube kube.InterfaceOVN, opts ...pod.AllocationOption) *PodAllocator {
 	podAnnotationAllocator := pod.NewPodAnnotationAllocator(
 		netInfo,
 		podLister,
 		kube,
+		opts...,
 	)
 
 	podAllocator := &PodAllocator{
 		netInfo:                netInfo,
-		kube:                   kube,
-		watchFactory:           watchFactory,
 		releasedPods:           map[string]sets.Set[string]{},
 		releasedPodsMutex:      sync.Mutex{},
 		podAnnotationAllocator: podAnnotationAllocator,
@@ -65,7 +61,8 @@ func NewPodAllocator(netInfo util.NetInfo, podLister listers.PodLister, kube kub
 
 	// this network might not have IPAM, we will just allocate MAC addresses
 	if util.DoesNetworkRequireIPAM(netInfo) {
-		podAllocator.ipAllocator = subnet.NewAllocator()
+		ipAllocator := subnet.NewAllocator()
+		podAllocator.ipAllocator = ipAllocator
 	}
 
 	return podAllocator
@@ -204,10 +201,6 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nad string, networkSelec
 	hasIDAllocation := util.DoesNetworkRequireTunnelIDs(a.netInfo)
 
 	hasPersistentIPs := networkSelectionElement.IPAMClaimReference != ""
-	if hasPersistentIPs {
-		_, err := a.watchFactory.GetPersistentIPs(pod.Namespace, networkSelectionElement.IPAMClaimReference)
-		hasPersistentIPs = err == nil
-	}
 	if !hasIPAM && !hasIDAllocation {
 		// we only take care of IP and tunnel ID allocation, if neither were
 		// allocated we have nothing to do
@@ -250,13 +243,10 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nad string, networkSelec
 }
 
 func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *nettypes.NetworkSelectionElement) error {
-	var (
-		ipAllocator            subnet.NamedAllocator
-		persistentIPsAllocator *persistentips.Allocator
-	)
+	var ipAllocator subnet.NamedAllocator
+
 	if util.DoesNetworkRequireIPAM(a.netInfo) {
 		ipAllocator = a.ipAllocator.ForSubnet(a.netInfo.GetNetworkName())
-		persistentIPsAllocator = persistentips.NewPersistentIPsAllocator(a.kube, ipAllocator)
 	}
 
 	var idAllocator id.NamedAllocator
@@ -265,34 +255,17 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *ne
 		idAllocator = a.idAllocator.ForName(name)
 	}
 
-	var ipamClaim *persistentipsapi.IPAMClaim
-	if util.DoesNetworkRequireIPAM(a.netInfo) {
-		klog.Infof("Allocate IPAMClaim for pod NAD: %q", nad)
-		var err error
-		ipamClaim, err = a.findIPAMClaim(pod, network)
-		if err != nil {
-			return err
-		}
-	}
-
 	const dontReallocate = false // don't reallocate to new IPs if currently annotated IPs fail to allocate
 	updatedPod, podAnnotation, err := a.podAnnotationAllocator.AllocatePodAnnotationWithTunnelID(
 		ipAllocator,
 		idAllocator,
 		pod,
 		network,
-		ipamClaim,
 		dontReallocate,
 	)
 
 	if err != nil {
 		return err
-	}
-
-	if ipamClaim != nil && persistentIPsAllocator != nil {
-		if err := persistentIPsAllocator.Reconcile(ipamClaim, util.StringSlice(podAnnotation.IPs)); err != nil {
-			return err
-		}
 	}
 
 	if updatedPod != nil {
@@ -310,21 +283,6 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *ne
 	}
 
 	return err
-}
-
-func (a *PodAllocator) findIPAMClaim(pod *corev1.Pod, network *nettypes.NetworkSelectionElement) (*persistentipsapi.IPAMClaim, error) {
-	if network.IPAMClaimReference != "" {
-		ipamClaimKey := network.IPAMClaimReference
-
-		klog.V(5).Infof("IPAMClaim key: %s", ipamClaimKey)
-		claim, err := a.watchFactory.GetPersistentIPs(pod.Namespace, ipamClaimKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get ipamLease %q", ipamClaimKey)
-		}
-
-		return claim, nil
-	}
-	return nil, nil
 }
 
 func (a *PodAllocator) addReleasedPod(nad, uid string) {
